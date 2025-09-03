@@ -20,24 +20,6 @@ def fetch_match_html(url: str) -> str:
     return html
 
 
-def extract_team_names(section) -> dict[str, str | int]:
-    """Extract home/away team names from the 'Shots' stat row"""
-    team_info = {}
-    for row in section.select("div.ssrcss-1onbazr-Section"):
-        parts = row.get_text(" ", strip=True).split(" ")
-        if parts[0] == "Shots":
-            # find positions of numeric values
-            home_val = find_first_float(parts)
-            away_val = find_first_float(parts, start=home_val + 1)
-            team_info['Home Team'] = " ".join(
-                parts[1:home_val])   # skip "Shots"
-            team_info['Away Team'] = " ".join(parts[home_val+1:away_val])
-            team_info['Home Length'] = len(team_info['Home Team'].split(' '))
-            team_info['Away Length'] = len(team_info['Away Team'].split(' '))
-            return team_info
-    return team_info
-
-
 def parse_match_stats(html: str) -> list[dict]:
     """Parse the HTML and extract match stats into a structured dict."""
     soup = BeautifulSoup(html, "html.parser")
@@ -71,12 +53,43 @@ def parse_match_stats(html: str) -> list[dict]:
     for section in adv_sections:
         label = section["aria-labelledby"]
         advanced_stats = []
-        for row in section.select("div.ssrcss-17m9s2s-StatWrapper"):
+        for row in section.find_all("div", recursive=False):
             parts = row.get_text(" ", strip=True).split(" ")
-            if len(parts) >= 5:
+            try:
                 advanced_stats.append(get_stats_from_arr(parts, teams))
+            except ValueError:
+                continue  # skip rows without numeric values
         stats["advanced"][label] = advanced_stats
     return stats
+
+
+def extract_team_names(section) -> dict[str, str | int]:
+    """Extract home/away team names from the 'Shots' stat row"""
+    team_info = {}
+    for row in section.find_all("div", recursive=False):
+        parts = row.get_text(" ", strip=True).split(" ")
+        if parts[0] == "Shots":
+            # find positions of numeric values
+            home_val = find_first_float(parts)
+            away_val = find_first_float(parts, start=home_val + 1)
+            team_info['Home Team'] = " ".join(
+                parts[1:home_val])   # skip "Shots"
+            team_info['Away Team'] = " ".join(parts[home_val+1:away_val])
+            team_info['Home Length'] = len(team_info['Home Team'].split(' '))
+            team_info['Away Length'] = len(team_info['Away Team'].split(' '))
+            return team_info
+    raise RuntimeError('No Shots stat found - unable to get team names')
+
+
+def find_first_float(arr: list, start=0) -> int:
+    '''Finds the first numerical value in a list'''
+    for i, val in enumerate(arr[start:], start=start):
+        try:
+            float(val)
+            return i
+        except ValueError:
+            continue
+    raise ValueError("No numeric value found in list")
 
 
 def get_stats_from_arr(arr: list, teams: dict) -> dict:
@@ -90,17 +103,6 @@ def get_stats_from_arr(arr: list, teams: dict) -> dict:
         "away_team": teams['Away Team'],
         "away_val": arr[away_val]
     }
-
-
-def find_first_float(arr: list, start=0) -> int:
-    '''Finds the first numerical value in a list'''
-    for i, val in enumerate(arr[start:], start=start):
-        try:
-            float(val)
-            return i
-        except ValueError:
-            continue
-    raise ValueError("No numeric value found in list")
 
 
 def extract_hidden_stat(wrapper, label=None):
@@ -122,6 +124,6 @@ def extract_hidden_stat(wrapper, label=None):
 
 
 if __name__ == "__main__":
-    bbc_html = fetch_match_html(BBC_URL_2)
+    bbc_html = fetch_match_html(BBC_URL)
     match_stats = parse_match_stats(bbc_html)
     print(json.dumps(match_stats, indent=2))
