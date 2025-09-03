@@ -4,16 +4,21 @@ Planning to scrape live football match data to produce graphs detailing the stor
 ## Scraping Logic
 When scraping stats from the BBC match page:
 * The basic stats are always inside: <section aria-labelledby="basic-match-stats">
-* Each normal stat row appears within: <div class="ssrcss-1onbazr-Section">
-* The pie-chart stats (possession, touches in box) are stored inside: <span class="visually-hidden">
-* The advanced stats are grouped in sections like: <section aria-labelledby="advanced-match-stats-attack|expected|distribution|defence">
-* And each stat row inside these groups is wrapped in: <div class="ssrcss-17m9s2s-StatWrapper">
-* Note: ssrcss-* class names are auto-generated and might change, so future BBC CSS changes can break this logic. I need to improve the code to be future-proof 
+* Each stat row is a direct <div> child of this section.
+* Team names are extracted from the "Shots" stat row (since it is the most reliable stat to be tracked by BBC).
+* Normal stats (e.g. Corners) are parsed by splitting text and detecting the 1st and 2nd numeric values, along with using the number of words in each team name.
+* Possession is handled as a special case — it appears as two <span class="visually-hidden"> elements containing percentages (e.g. Chelsea 53.8%).
+* The advanced stats are grouped in sections like: <section aria-labelledby="advanced-match-stats-attack"> with `attack` being the group name.
+* Each stat row is a direct <div> child inside these sections.
+* Stats are parsed using the same logic as for basic stats.
+* The section’s `aria-labelledby` value is used as the group name in the output.
 
 ## File structures
 - .github
     - Utility folder used for github configs
 - src
+    - bbc_scrape.py
+        - Module takes URL of a BBC match page and scrapes the match stats
 - test
     - Contains testing scripts for each module
 
