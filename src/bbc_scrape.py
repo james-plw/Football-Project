@@ -6,18 +6,6 @@ from bs4 import BeautifulSoup  # for parsing HTML
 BBC_URL = 'https://www.bbc.co.uk/sport/football/live/czxyqddyj8wt#MatchStats'
 BBC_URL_2 = 'https://www.bbc.co.uk/sport/football/live/c04r3pnn32vt#MatchStats'
 
-# hard coded to make it easier to account for different-length football club names
-BBC_STAT_NAMES = ['xG', 'Shots', 'Shots on target', 'Total touches inside the opposition box',
-                  'Goalkeeper saves', 'Fouls committed', 'Corners', 'Shots off target',
-                  'Attempts out of box', 'Total offsides', 'xG from open play',
-                  'xG from set play', 'xA', 'Total passes', 'Pass accuracy %',
-                  'Backward passes', 'Forward passes', 'Total long balls',
-                  'Successful final third passes', 'Total crosses', 'Total tackles',
-                  'Won tackle %', 'Fouls committed', 'Total yellow cards', 'Total clearances',
-                  'Clearances off the line']
-# sorted by longest stat-names first, to avoid Shots on target matching with Shots incorrectly
-SORTED_STAT_NAMES = sorted(BBC_STAT_NAMES, key=lambda s: -len(s.split()))
-
 
 def fetch_match_html(url: str) -> str:
     """Fetch the fully rendered HTML for the BBC match stats page."""
@@ -32,6 +20,24 @@ def fetch_match_html(url: str) -> str:
     return html
 
 
+def extract_team_names(section) -> dict[str, str | int]:
+    """Extract home/away team names from the 'Shots' stat row"""
+    team_info = {}
+    for row in section.select("div.ssrcss-1onbazr-Section"):
+        parts = row.get_text(" ", strip=True).split(" ")
+        if parts[0] == "Shots":
+            # find positions of numeric values
+            home_val = find_first_float(parts)
+            away_val = find_first_float(parts, start=home_val + 1)
+            team_info['Home Team'] = " ".join(
+                parts[1:home_val])   # skip "Shots"
+            team_info['Away Team'] = " ".join(parts[home_val+1:away_val])
+            team_info['Home Length'] = len(team_info['Home Team'].split(' '))
+            team_info['Away Length'] = len(team_info['Away Team'].split(' '))
+            return team_info
+    return team_info
+
+
 def parse_match_stats(html: str) -> list[dict]:
     """Parse the HTML and extract match stats into a structured dict."""
     soup = BeautifulSoup(html, "html.parser")
@@ -42,11 +48,14 @@ def parse_match_stats(html: str) -> list[dict]:
     basic_section = soup.select_one(
         "section[aria-labelledby='basic-match-stats']")
     if basic_section:
+        teams = extract_team_names(basic_section)
+        print(teams)
         # Normal stats
         for row in basic_section.select("div.ssrcss-1onbazr-Section"):
             parts = row.get_text(" ", strip=True).split(" ")
             if len(parts) >= 5:
-                stats["basic"].append(get_stats_from_arr(parts))
+                stats["basic"].append(get_stats_from_arr(
+                    parts, teams))
         # Possession
         for wrapper in basic_section.select("div.ssrcss-1a050bw-Wrapper"):
             stat = extract_hidden_stat(wrapper, label="Possession")
@@ -63,7 +72,6 @@ def parse_match_stats(html: str) -> list[dict]:
     adv_sections = soup.find_all("section", {
         "aria-labelledby": lambda v: v and v.startswith("advanced-match-stats")
     })
-
     for section in adv_sections:
         label = section["aria-labelledby"]
         adv_rows = section.select("div.ssrcss-17m9s2s-StatWrapper")
@@ -71,24 +79,21 @@ def parse_match_stats(html: str) -> list[dict]:
         for row in adv_rows:
             parts = row.get_text(" ", strip=True).split(" ")
             if len(parts) >= 5:
-                advanced_stats.append(get_stats_from_arr(parts))
+                advanced_stats.append(get_stats_from_arr(parts, teams))
         stats["advanced"][label] = advanced_stats
     return stats
 
 
-def get_stats_from_arr(arr: list) -> dict:
-    matched_stat = next(
-        (stat for stat in SORTED_STAT_NAMES if arr[:len(
-            stat.split())] == stat.split()),
-        None)
-    first_val = find_first_float(arr)
-    second_val = find_first_float(arr, start=first_val + 1)
+def get_stats_from_arr(arr: list, teams: dict) -> dict:
+    '''Formats the stat from a list into a dict'''
+    home_val = find_first_float(arr)
+    away_val = find_first_float(arr, start=home_val + 1)
     return {
-        "stat": matched_stat,
-        "home_team": ' '.join(arr[len(matched_stat.split()):first_val]),
-        "home_val": arr[first_val],
-        "away_team": ' '.join(arr[first_val+1:second_val]),
-        "away_val": arr[second_val]
+        "stat": ' '.join(arr[:home_val-teams['Home Length']]),
+        "home_team": teams['Home Team'],
+        "home_val": arr[home_val],
+        "away_team": teams['Away Team'],
+        "away_val": arr[away_val]
     }
 
 
@@ -122,6 +127,6 @@ def extract_hidden_stat(wrapper, label=None):
 
 
 if __name__ == "__main__":
-    bbc_html = fetch_match_html(BBC_URL)
+    bbc_html = fetch_match_html(BBC_URL_2)
     match_stats = parse_match_stats(bbc_html)
     print(json.dumps(match_stats, indent=2))
