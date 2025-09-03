@@ -49,24 +49,20 @@ def parse_match_stats(html: str) -> list[dict]:
         "section[aria-labelledby='basic-match-stats']")
     if basic_section:
         teams = extract_team_names(basic_section)
-        print(teams)
-        # Normal stats
-        for row in basic_section.select("div.ssrcss-1onbazr-Section"):
+        for row in basic_section.find_all("div", recursive=False):
+            # Possession (two spans with percentages)
+            spans = row.select("span.visually-hidden")
+            if len(spans) == 2 and all("%" in s.get_text() for s in spans):
+                stat = extract_hidden_stat(row, label="Possession")
+                if stat:
+                    stats["basic"].append(stat)
+                continue
+            # Normal stats
             parts = row.get_text(" ", strip=True).split(" ")
-            if len(parts) >= 5:
-                stats["basic"].append(get_stats_from_arr(
-                    parts, teams))
-        # Possession
-        for wrapper in basic_section.select("div.ssrcss-1a050bw-Wrapper"):
-            stat = extract_hidden_stat(wrapper, label="Possession")
-            if stat:
-                stats["basic"].append(stat)
-        # Touches in opposition box
-        for wrapper in basic_section.select("div.ssrcss-3tqs06-Wrapper"):
-            stat = extract_hidden_stat(
-                wrapper, label="Total touches inside the opposition box")
-            if stat:
-                stats["basic"].append(stat)
+            try:
+                stats['basic'].append(get_stats_from_arr(parts, teams))
+            except ValueError:
+                continue  # skip rows without numeric values
 
     # Advanced stats
     adv_sections = soup.find_all("section", {
@@ -74,9 +70,8 @@ def parse_match_stats(html: str) -> list[dict]:
     })
     for section in adv_sections:
         label = section["aria-labelledby"]
-        adv_rows = section.select("div.ssrcss-17m9s2s-StatWrapper")
         advanced_stats = []
-        for row in adv_rows:
+        for row in section.select("div.ssrcss-17m9s2s-StatWrapper"):
             parts = row.get_text(" ", strip=True).split(" ")
             if len(parts) >= 5:
                 advanced_stats.append(get_stats_from_arr(parts, teams))
