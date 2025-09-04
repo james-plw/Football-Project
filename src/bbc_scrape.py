@@ -1,10 +1,27 @@
 '''Module for scraping match stats data from the BBC page for a football game'''
+import argparse
+import datetime
+import time
 import json  # for data output
 from playwright.sync_api import sync_playwright  # for launching browser instances
 from bs4 import BeautifulSoup  # for parsing HTML
+from bs4.element import Tag  # type hints
 
-BBC_URL = 'https://www.bbc.co.uk/sport/football/live/czxyqddyj8wt#MatchStats'
-BBC_URL_2 = 'https://www.bbc.co.uk/sport/football/live/c04r3pnn32vt#MatchStats'
+
+# BBC_URL = 'https://www.bbc.co.uk/sport/football/live/czxyqddyj8wt#MatchStats'
+# BBC_URL_2 = 'https://www.bbc.co.uk/sport/football/live/c04r3pnn32vt#MatchStats'
+FUTURE_URL = 'https://www.bbc.co.uk/sport/football/live/c626pmgznp6t'
+
+
+def handle_cl_args() -> str:
+    '''Handles command line arguments for chosen match URL'''
+    parser = argparse.ArgumentParser()
+    parser.add_argument('url', help='BBC match URL')
+    args = parser.parse_args()
+    url = args.url
+    if not url.startswith('https://www.bbc.co.uk/sport/football'):
+        raise ValueError('Invalid URL')
+    return url
 
 
 def fetch_match_html(url: str) -> str:
@@ -13,14 +30,52 @@ def fetch_match_html(url: str) -> str:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.goto(url)
-        # Wait until the Match Stats tab has loaded
-        page.wait_for_selector("section[aria-labelledby='basic-match-stats']")
+        if 'MatchStats' in url:
+            # Wait until the Match Stats tab has loaded
+            page.wait_for_selector(
+                "section[aria-labelledby='basic-match-stats']")
+        else:
+            page.wait_for_selector("body")
         html = page.content()
         browser.close()
     return html
 
 
-def parse_match_stats(html: str) -> list[dict]:
+def fetch_kickoff_time(html: str) -> datetime:
+    '''Fetch the kickoff date and time for future matches - to use for scheduling'''
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Get the date from a <time> tag containing 3 or more words
+    date_tag = soup.find("time", string=lambda s: s and len(s.split()) >= 3)
+    if not date_tag:
+        return None
+    date_str = date_tag.get_text(strip=True)
+
+    # Get the kickoff from a <time> tag containing ':'
+    time_tag = soup.find("time", string=lambda s: s and ":" in s)
+    if not time_tag:
+        return None
+    time_str = time_tag.get_text(strip=True)
+
+    # Combine into a datetime
+    try:
+        dt = datetime.datetime.strptime(
+            f"{date_str} {time_str}", "%a %d %b %Y %H:%M")
+        return dt
+    except ValueError:
+        return None
+
+
+def sleep_until_kickoff(kickoff: datetime):
+    '''Calculates time until kickoff and sleeps until then'''
+    now = datetime.datetime.now()
+    if kickoff > now:
+        wait_seconds = (kickoff - now).total_seconds()
+        print(f"Waiting {wait_seconds/60:.1f} minutes until kickoff...")
+        time.sleep(wait_seconds)
+
+
+def parse_match_stats(html: str) -> dict[str, list | dict]:
     """Parse the HTML and extract match stats into a structured dict."""
     soup = BeautifulSoup(html, "html.parser")
 
@@ -63,7 +118,7 @@ def parse_match_stats(html: str) -> list[dict]:
     return stats
 
 
-def extract_team_names(section) -> dict[str, str | int]:
+def extract_team_names(section: Tag) -> dict[str, str | int]:
     """Extract home/away team names from the 'Shots' stat row"""
     team_info = {}
     for row in section.find_all("div", recursive=False):
@@ -105,7 +160,7 @@ def get_stats_from_arr(arr: list, teams: dict) -> dict:
     }
 
 
-def extract_hidden_stat(wrapper, label=None):
+def extract_hidden_stat(wrapper: Tag, label: str = None):
     """Extract a stat from a wrapper that uses visually-hidden spans."""
     spans = wrapper.select("span.visually-hidden")
     if not spans:
@@ -123,7 +178,31 @@ def extract_hidden_stat(wrapper, label=None):
     }
 
 
+def scrape_every_minute(url: str):
+    '''Scrapes BBC match stats for chosen URL, waiting 60s between every attempt'''
+    try:
+        while True:
+            stats_html = fetch_match_html(url)
+            match_stats = parse_match_stats(stats_html)
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            print(f"[{timestamp}] Scraped stats:")
+            print(json.dumps(match_stats, indent=2))
+
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("Stopped scraping.")
+
+
 if __name__ == "__main__":
-    bbc_html = fetch_match_html(BBC_URL)
-    match_stats = parse_match_stats(bbc_html)
-    print(json.dumps(match_stats, indent=2))
+    bbc_url = handle_cl_args()
+    bbc_html = fetch_match_html(bbc_url)
+    kickoff = fetch_kickoff_time(bbc_html)
+    if not kickoff:
+        raise RuntimeError("Could not find kickoff time for match")
+
+    print(f"Kickoff scheduled at {kickoff}")
+
+    sleep_until_kickoff(kickoff)
+
+    match_stats_url = bbc_url + '#MatchStats'
+    scrape_every_minute(match_stats_url)
