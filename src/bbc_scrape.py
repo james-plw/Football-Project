@@ -196,13 +196,13 @@ def scrape_every_minute(url: str):
 if __name__ == "__main__":
     bbc_url = handle_cl_args()
     bbc_html = fetch_match_html(bbc_url)
-    kickoff = fetch_kickoff_time(bbc_html)
-    if not kickoff:
+    match_kickoff = fetch_kickoff_time(bbc_html)
+    if not match_kickoff:
         raise RuntimeError("Could not find kickoff time for match")
 
-    print(f"Kickoff scheduled at {kickoff}")
+    print(f"Kickoff scheduled at {match_kickoff}")
 
-    sleep_until_kickoff(kickoff)
+    sleep_until_kickoff(match_kickoff)
 
     match_stats_url = bbc_url + '#MatchStats'
     scrape_every_minute(match_stats_url)
