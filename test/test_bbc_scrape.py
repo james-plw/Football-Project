@@ -25,7 +25,7 @@ def test_parse_match_stats():
       </body>
     </html>
     """
-    stats = parse_match_stats(html)
+    stats, teams = parse_match_stats(html)
     assert "basic" in stats
     assert any(s["stat"] == "Shots" for s in stats["basic"])
     assert any(s["stat"] == "Possession" for s in stats["basic"])
