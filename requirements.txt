@@ -2,3 +2,4 @@ pylint==3.3.7
 pytest==8.4.1
 playwright
 bs4==0.0.2
+pandas
