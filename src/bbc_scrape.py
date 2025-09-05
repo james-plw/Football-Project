@@ -2,7 +2,7 @@
 import argparse
 import datetime
 import time
-import json  # for data output
+# import json  # for data output
 from playwright.sync_api import sync_playwright  # for launching browser instances
 from bs4 import BeautifulSoup  # for parsing HTML
 from bs4.element import Tag  # type hints
@@ -73,7 +73,7 @@ def sleep_until_kickoff(kickoff: datetime):
         time.sleep(wait_seconds)
 
 
-def parse_match_stats(html: str) -> dict[str, list | dict]:
+def parse_match_stats(html: str) -> tuple[dict, dict]:
     """Parse the HTML and extract match stats into a structured dict."""
     soup = BeautifulSoup(html, "html.parser")
 
@@ -113,7 +113,7 @@ def parse_match_stats(html: str) -> dict[str, list | dict]:
             except ValueError:
                 continue  # skip rows without numeric values
         stats["advanced"][label] = advanced_stats
-    return stats
+    return stats, teams
 
 
 def extract_team_names(section: Tag) -> dict[str, str | int]:
@@ -176,58 +176,77 @@ def extract_hidden_stat(wrapper: Tag, label: str = None):
     }
 
 
+def create_filename(teams: dict, kickoff: datetime):
+    '''Defines output filename from teams and date'''
+
+    home_team = teams['Home Team'].replace(" ", "_")
+    away_team = teams['Away Team'].replace(" ", "_")
+    date_str = kickoff.strftime('%Y_%m_%d')
+
+    return f"{home_team}_{away_team}_{date_str}.csv"
+
+
+def build_row(stats: dict, teams: dict, timestamp: str, match_minute: int) -> dict:
+    '''Builds a flat dict of stats for saving to a csv'''
+    home_team = teams['Home Team'].replace(" ", "_")
+    away_team = teams['Away Team'].replace(" ", "_")
+
+    row = {"time": timestamp, "minute": match_minute}
+    for stat in stats["basic"]:
+        stat_name = stat["stat"].replace(" ", "_")
+        row[f"{stat_name}_{home_team}"] = stat["home_val"]
+        row[f"{stat_name}_{away_team}"] = stat["away_val"]
+
+    for stat_list in stats["advanced"].values():
+        for stat in stat_list:
+            stat_name = stat["stat"].replace(" ", "_")
+            row[f"{stat_name}_{home_team}"] = stat["home_val"]
+            row[f"{stat_name}_{away_team}"] = stat["away_val"]
+
+    return row
+
+
 def scrape_every_minute(url: str, kickoff: datetime):
     '''Scrapes BBC match stats for chosen URL, waiting 60s between every attempt'''
+    csv_file = None
     rows = []
-    csv_file = create_filename(url, kickoff)
+    unchanged_count = 0
     try:
         while True:
+            now = datetime.datetime.now()
+            timestamp = now.strftime("%H:%M:%S")
+            match_minute = int((now - kickoff).total_seconds() // 60)
+
             stats_html = fetch_match_html(url)
-            match_stats = parse_match_stats(stats_html)
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            match_stats, teams = parse_match_stats(stats_html)
+            if not csv_file:
+                csv_file = create_filename(teams, kickoff)
+
             # Creating flat dict to convert into a DataFrame
-            row = {"time": timestamp}
+            row = build_row(match_stats, teams, timestamp, match_minute)
 
-            for stat in match_stats["basic"]:
-                stat_name = stat["stat"].replace(" ", "_")
-                home_team = stat['home_team'].replace(" ", "_")
-                away_team = stat['away_team'].replace(" ", "_")
-                row[f"{stat_name}_{home_team}"] = stat["home_val"]
-                row[f"{stat_name}_{away_team}"] = stat["away_val"]
-            for section, stat_list in match_stats["advanced"].items():
-                for stat in stat_list:
-                    stat_name = stat["stat"].replace(" ", "_")
-                    home_team = stat['home_team'].replace(" ", "_")
-                    away_team = stat['away_team'].replace(" ", "_")
-                    row[f"{stat_name}_{home_team}"] = stat["home_val"]
-                    row[f"{stat_name}_{away_team}"] = stat["away_val"]
-            rows.append(row)
+            # Check if stats changed since last scrape
+            if rows and row == rows[-1]:
+                unchanged_count += 1
+                print(f"[{timestamp}] No change in stats.")
+            else:
+                unchanged_count = 0
+                rows.append(row)
+                print(f"[{timestamp}] Scraped stats (minute {match_minute}):")
+                # print(json.dumps(match_stats, indent=2))
 
-            print(f"[{timestamp}] Scraped successfully:")
-            print(json.dumps(match_stats, indent=2))
+                # Append to CSV after each scrape
+                df = pd.DataFrame(rows)
+                df.to_csv(csv_file, index=False)
+                print(f"Saving to {csv_file}")
 
-            # Append to CSV after each scrape
-            df = pd.DataFrame(rows)
-            df.to_csv(csv_file, index=False)
-            print(f"Saving to {csv_file}")
-
+            # Stop after if unchanged for 5 minutes after 90 mins + 15 mins break
+            if match_minute >= 105 and unchanged_count >= 5:
+                print("No changes detected after 90 minutes. Stopping scraper.")
+                break
             time.sleep(60)
     except KeyboardInterrupt:
         print("Stopped scraping.")
-
-
-def create_filename(url: str, kickoff: datetime):
-    date_str = kickoff.strftime('%Y_%m_%d')
-
-    html = fetch_match_html(url)
-    stats = parse_match_stats(html)
-
-    if not stats["basic"]:
-        raise RuntimeError("Could not extract team names from first scrape")
-
-    home_team = stats["basic"][0]["home_team"].replace(" ", "_")
-    away_team = stats["basic"][0]["away_team"].replace(" ", "_")
-    return f"{home_team}_{away_team}_{date_str}.csv"
 
 
 if __name__ == "__main__":
@@ -243,4 +262,4 @@ if __name__ == "__main__":
 
     match_stats_url = bbc_url + '#MatchStats'
 
-    scrape_every_minute(match_stats_url, date_str)
+    scrape_every_minute(match_stats_url, match_kickoff)
