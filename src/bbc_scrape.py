@@ -6,10 +6,8 @@ import json  # for data output
 from playwright.sync_api import sync_playwright  # for launching browser instances
 from bs4 import BeautifulSoup  # for parsing HTML
 from bs4.element import Tag  # type hints
+import pandas as pd
 
-
-# BBC_URL = 'https://www.bbc.co.uk/sport/football/live/czxyqddyj8wt#MatchStats'
-# BBC_URL_2 = 'https://www.bbc.co.uk/sport/football/live/c04r3pnn32vt#MatchStats'
 FUTURE_URL = 'https://www.bbc.co.uk/sport/football/live/c626pmgznp6t'
 
 
@@ -178,19 +176,58 @@ def extract_hidden_stat(wrapper: Tag, label: str = None):
     }
 
 
-def scrape_every_minute(url: str):
+def scrape_every_minute(url: str, kickoff: datetime):
     '''Scrapes BBC match stats for chosen URL, waiting 60s between every attempt'''
+    rows = []
+    csv_file = create_filename(url, kickoff)
     try:
         while True:
             stats_html = fetch_match_html(url)
             match_stats = parse_match_stats(stats_html)
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-            print(f"[{timestamp}] Scraped stats:")
+            # Creating flat dict to convert into a DataFrame
+            row = {"time": timestamp}
+
+            for stat in match_stats["basic"]:
+                stat_name = stat["stat"].replace(" ", "_")
+                home_team = stat['home_team'].replace(" ", "_")
+                away_team = stat['away_team'].replace(" ", "_")
+                row[f"{stat_name}_{home_team}"] = stat["home_val"]
+                row[f"{stat_name}_{away_team}"] = stat["away_val"]
+            for section, stat_list in match_stats["advanced"].items():
+                for stat in stat_list:
+                    stat_name = stat["stat"].replace(" ", "_")
+                    home_team = stat['home_team'].replace(" ", "_")
+                    away_team = stat['away_team'].replace(" ", "_")
+                    row[f"{stat_name}_{home_team}"] = stat["home_val"]
+                    row[f"{stat_name}_{away_team}"] = stat["away_val"]
+            rows.append(row)
+
+            print(f"[{timestamp}] Scraped successfully:")
             print(json.dumps(match_stats, indent=2))
+
+            # Append to CSV after each scrape
+            df = pd.DataFrame(rows)
+            df.to_csv(csv_file, index=False)
+            print(f"Saving to {csv_file}")
 
             time.sleep(60)
     except KeyboardInterrupt:
         print("Stopped scraping.")
+
+
+def create_filename(url: str, kickoff: datetime):
+    date_str = kickoff.strftime('%Y_%m_%d')
+
+    html = fetch_match_html(url)
+    stats = parse_match_stats(html)
+
+    if not stats["basic"]:
+        raise RuntimeError("Could not extract team names from first scrape")
+
+    home_team = stats["basic"][0]["home_team"].replace(" ", "_")
+    away_team = stats["basic"][0]["away_team"].replace(" ", "_")
+    return f"{home_team}_{away_team}_{date_str}.csv"
 
 
 if __name__ == "__main__":
@@ -205,4 +242,5 @@ if __name__ == "__main__":
     sleep_until_kickoff(match_kickoff)
 
     match_stats_url = bbc_url + '#MatchStats'
-    scrape_every_minute(match_stats_url)
+
+    scrape_every_minute(match_stats_url, date_str)
